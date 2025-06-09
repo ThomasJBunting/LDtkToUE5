@@ -4,17 +4,15 @@ import os
 
 # === CONFIGURATION SECTION ===
 
-# Map LDtk Entity Identifiers to Blueprint Paths
 ENTITY_BLUEPRINTS = {
     "Player": "/Game/Blueprints/BP_Player",
     "Enemy": "/Game/Blueprints/BP_Enemy",
     # Add more mappings as needed
 }
 
-# Set size of collision height (Z dimension)
+TILESET_TEXTURE_PATH = "/Game/Sprites/Tileset"  # Texture used for tileset
+SPRITE_FOLDER_PATH = "/Game/Sprites/Generated"  # Folder to save sprites
 COLLISION_Z_HEIGHT = 64
-
-# === MAIN ENTRY POINT ===
 
 def import_ldtk_project(ldtk_filename: str):
     base_dir = unreal.Paths.project_content_dir()
@@ -28,11 +26,9 @@ def import_ldtk_project(ldtk_filename: str):
         data = json.load(f)
 
     for level in data["levels"]:
-        process_level(level)
+        process_level(level, data)
 
-# === LEVEL PROCESSING ===
-
-def process_level(level_data: dict):
+def process_level(level_data: dict, project_data: dict):
     level_name = level_data["identifier"]
     unreal.log(f"[LDtkImporter] Processing level: {level_name}")
 
@@ -44,11 +40,9 @@ def process_level(level_data: dict):
         elif layer_type == "IntGrid":
             process_intgrid_layer(layer)
         elif layer_type in ["Tiles", "AutoLayer"]:
-            process_tile_layer(layer)
+            process_tile_layer(layer, project_data)
         else:
             unreal.log_warning(f"[LDtkImporter] Unknown layer type: {layer_type}")
-
-# === ENTITY LAYER ===
 
 def process_entity_layer(layer: dict):
     for entity in layer["entityInstances"]:
@@ -66,8 +60,6 @@ def process_entity_layer(layer: dict):
         else:
             unreal.log_warning(f"[Entity] No blueprint mapped for entity: {name}")
 
-# === INTGRID LAYER ===
-
 def process_intgrid_layer(layer: dict):
     width = layer["__cWid"]
     height = layer["__cHei"]
@@ -77,12 +69,10 @@ def process_intgrid_layer(layer: dict):
     for index, value in enumerate(grid):
         if value == 0:
             continue
-
         col = index % width
         row = index // width
         x = col * tile_size
         y = row * tile_size
-
         spawn_collision_box(x, y, tile_size)
 
 def spawn_collision_box(x, y, tile_size):
@@ -94,9 +84,7 @@ def spawn_collision_box(x, y, tile_size):
     box_actor.add_instance_component(box_component)
     unreal.log(f"[Collision] Box at ({x}, {y})")
 
-# === TILE LAYER ===
-
-def process_tile_layer(layer: dict):
+def process_tile_layer(layer: dict, project_data: dict):
     tile_size = layer["__gridSize"]
     tiles = layer["gridTiles"]
 
@@ -106,16 +94,29 @@ def process_tile_layer(layer: dict):
         pos_x = tile["px"][0]
         pos_y = tile["px"][1]
         tile_id = tile["t"]
+        sprite = get_or_create_sprite(tile_id, src_x, src_y, tile_size)
+        spawn_tile_sprite(pos_x, pos_y, sprite)
 
-        spawn_tile_sprite(pos_x, pos_y, tile_id)
+def get_or_create_sprite(tile_id, src_x, src_y, tile_size):
+    sprite_name = f"LDtk_Tile_{tile_id}"
+    sprite_path = f"{SPRITE_FOLDER_PATH}/{sprite_name}"
 
-def spawn_tile_sprite(x, y, tile_id):
-    # TODO: Replace with actual sprite lookup and creation
+    if unreal.EditorAssetLibrary.does_asset_exist(sprite_path):
+        return unreal.EditorAssetLibrary.load_asset(sprite_path)
+
+    texture = unreal.EditorAssetLibrary.load_asset(TILESET_TEXTURE_PATH)
+    factory = unreal.PaperSpriteFactory()
+    factory.set_editor_property("initial_texture", texture)
+    sprite_asset = unreal.AssetToolsHelpers.get_asset_tools().create_asset(sprite_name, SPRITE_FOLDER_PATH, unreal.PaperSprite, factory)
+    sprite_asset.set_editor_property("source_uv", unreal.IntPoint(src_x, src_y))
+    sprite_asset.set_editor_property("source_dimension", unreal.IntPoint(tile_size, tile_size))
+    return sprite_asset
+
+def spawn_tile_sprite(x, y, sprite):
     location = unreal.Vector(x, 0, -y)
-    sprite_actor = unreal.EditorLevelLibrary.spawn_actor_from_class(unreal.PaperSpriteActor.static_class(), location)
-    sprite_actor.set_actor_label(f"Tile_{tile_id}")
-    unreal.log(f"[Tile] Placed tile {tile_id} at ({x}, {y})")
+    actor = unreal.EditorLevelLibrary.spawn_actor_from_class(unreal.PaperSpriteActor.static_class(), location)
+    actor.get_editor_property("render_component").set_sprite(sprite)
+    actor.set_actor_label(f"Tile_{sprite.get_name()}")
+    unreal.log(f"[Tile] Placed tile at ({x}, {y})")
 
-# === USAGE ===
-# Call this in the Unreal Python console with:
-# import_ldtk_project("your_project.ldtk")
+# Optional: Add UI button later using Editor Utility Widget or Blutility
